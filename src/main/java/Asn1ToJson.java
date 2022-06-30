@@ -356,9 +356,6 @@ public class Asn1ToJson {
     }
 
 
-
-
-
     public static void main(String[] args) {
         for (int k = 0; k < 3; k++)
             try {
@@ -402,12 +399,6 @@ public class Asn1ToJson {
          */
 
 
-    }
-    static JsonNode walk(ASN1Primitive obj) {
-        return switch(obj) {
-            case ASN1Set a -> om.createArrayNode();
-            default -> null;
-        };
     }
 
     public static int peekForTag(ASN1Primitive obj) {
