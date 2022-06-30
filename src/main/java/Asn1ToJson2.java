@@ -1,6 +1,7 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.*;
+import com.google.common.base.Function;
 import org.bouncycastle.asn1.*;
 import org.bouncycastle.util.Strings;
 import org.bouncycastle.util.encoders.Hex;
@@ -13,7 +14,7 @@ import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
-public class Asn1ToJson {
+public class Asn1ToJson2 {
     static ObjectMapper om = new ObjectMapper();
 
     private static final String TAB = "    ";
@@ -21,7 +22,6 @@ public class Asn1ToJson {
 
     private static boolean writeStringBuf = true;
 
-    private static HashMap<Class, Long> countClass=new HashMap<>();
 
     /**
      * dump a DER object as a formatted string with indentation
@@ -34,7 +34,7 @@ public class Asn1ToJson {
             ASN1Primitive obj,
             StringBuilder buf) {
         String nl = Strings.lineSeparator();
-        countClass.compute(obj.getClass(), (k,v) -> (v==null) ? 1 : v+1);
+
         if (obj instanceof ASN1Null) {
             return NullNode.instance;
 //            buf.append(indent);
@@ -64,8 +64,7 @@ public class Asn1ToJson {
         } else if (obj instanceof ASN1Set) {
             String type = "";
             if (obj instanceof BERSet) {
-                BERSet berSet = (BERSet) obj;
-                type= "BER Set";
+                type = "BER Set";
             } else if (obj instanceof DERSet) {
                 type = "DER Set";
             } else {
@@ -355,46 +354,108 @@ public class Asn1ToJson {
         return buf.toString();
     }
 
+    public static int depth;
+
+    public static JsonNode procDlTaggedObject(DLTaggedObject obj) {
+//        System.out.println("dtag: " + depth);
+        return walkRecurse(obj.getBaseObject().toASN1Primitive());
+    }
+
+    public static JsonNode procBERSet(BERSet set) {
+//        System.out.println("set: " + depth);
+        ObjectNode on = om.createObjectNode();
+        for (int i = 0, count = set.size(); i < count; ++i) {
+            ASN1Primitive tagPeek = set.getObjectAt(i).toASN1Primitive();
+            int t = peekForTag(tagPeek);
+            String tagStr;
+            if (t == -1)
+                throw new RuntimeException("set child not tagged?"); // tagStr = "u" + i;
+            else
+                tagStr = "" + t;
+            on.set(tagStr, walkRecurse(set.getObjectAt(i).toASN1Primitive()));
+        }
+        return on;
+    }
+
+    public static JsonNode procDEROctetString(DEROctetString obj) {
+//        System.out.println("ostr: " + depth);
+        return new TextNode(toStr(obj.getOctets()));
+    }
+
+    public static JsonNode procDERGraphicString(DERGraphicString obj) {
+//        System.out.println("gstr: " + depth);
+        String s = obj.getString();
+        return new TextNode(s);
+    }
 
 
+    public static JsonNode procBERSequence(BERSequence sequence) {
+//        System.out.println("seq: " + depth);
+        ArrayNode an = om.createArrayNode();
+        for (int i = 0, count = sequence.size(); i < count; ++i) {
+            an.add(walkRecurse(sequence.getObjectAt(i).toASN1Primitive()));
+        }
+        return an;
+    }
 
+    private static HashMap<Class, Function<ASN1Primitive, JsonNode>> typeHandlers = new HashMap<>();
+
+    static {
+        typeHandlers.put(BERTaggedObject.class, (obj) -> procBERTaggedObject((BERTaggedObject) obj));
+        typeHandlers.put(DLTaggedObject.class, (obj) -> procDlTaggedObject((DLTaggedObject) obj));
+        typeHandlers.put(BERSequence.class, (obj) -> procBERSequence((BERSequence) obj));
+        typeHandlers.put(BERSet.class, (obj) -> procBERSet((BERSet) obj));
+        typeHandlers.put(DERGraphicString.class, (obj) -> procDERGraphicString((DERGraphicString) obj));
+        typeHandlers.put(DEROctetString.class, (obj) -> procDEROctetString((DEROctetString) obj));
+    }
+
+    private static JsonNode procBERTaggedObject(BERTaggedObject obj) {
+//        System.out.println("btag: " + depth);
+        return walkRecurse(obj.getBaseObject().toASN1Primitive());
+    }
+
+    public static JsonNode walkRecurse(ASN1Primitive obj) {
+        var handler = typeHandlers.get(obj.getClass());
+        if (handler == null)
+            throw new RuntimeException("no handler for class: " + obj.getClass().getName());
+        else {
+            return handler.apply(obj);
+        }
+    }
 
     public static void main(String[] args) {
-        for (int k = 0; k < 3; k++)
-            try {
+
+        try {
+            depth = 0;
+            for (int k = 0; k < 3; k++)
+                
+
+            try (ASN1InputStream ais = new ASN1InputStream(Util.create(Paths.get(args[0])))) {
                 PhaseTrack.start();
-                try (ASN1InputStream ais = new ASN1InputStream(Util.create(Paths.get(args[0])))) {
-                    int i = 0;
-                    long len = 0;
-                    StringBuilder buf = new StringBuilder(1024);
-                    while (ais.available() > 0) {
-                        ASN1Primitive obj = ais.readObject();
-                        JsonNode jo = dumpAsString(obj, buf, true);
-                        String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
-                        len += prettyJson.length();
+                int i = 0;
+                long len = 0;
+                while (ais.available() > 0) {
+                    ASN1Primitive obj = ais.readObject();
+                    JsonNode jo = walkRecurse(obj);
+                    String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
+                    len += prettyJson.length();
 //                    System.out.println(prettyJson);
 //                    System.out.println("==============");
-//                    System.out.println(buf.toString());
-//                    System.out.println("\n\n\n");
-//                        buf.setLength(0);
-//                        i++;
-//                        if (i % 1000 == 0) {
-//                            PhaseTrack.recordTimePoint("" + i);
-//                        }
-//                        if (i>3) System.exit(1);
-                    }
-                    System.out.printf("recs: %d  len: %d\n", i, len);
 
+                    i++;
+                    if (i % 1000 == 0) {
+                        PhaseTrack.recordTimePoint("" + i);
+                    }
+//                    if (i > 3) System.exit(1);
                 }
+                System.out.printf("recs: %d  len: %d\n", i, len);
+
                 PhaseTrack.recordTimePoint("done");
                 PhaseTrack.logTimes("all times", Level.INFO, TimeUnit.MILLISECONDS);
-
-                for(var e: countClass.entrySet()) {
-                    System.out.println(e.getKey().getSimpleName() + " " + e.getValue());
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
             }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         /*
 
@@ -402,12 +463,6 @@ public class Asn1ToJson {
          */
 
 
-    }
-    static JsonNode walk(ASN1Primitive obj) {
-        return switch(obj) {
-            case ASN1Set a -> om.createArrayNode();
-            default -> null;
-        };
     }
 
     public static int peekForTag(ASN1Primitive obj) {

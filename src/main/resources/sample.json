@@ -1,0 +1,50 @@
+{
+  "MMTelRec": {
+    "type": "SET",
+    "value": {
+      "0": {
+        "rtype": "OctetString",
+        "value": {
+          "hex": "",
+          "str": ""
+          }
+        },
+      "2": {
+        "rtype": "OctetString",
+        "value": {
+          "hex": "",
+          "str": ""
+        }
+      }
+      }
+    }
+  }
+
+
+
+[
+  {
+    "tag": 2112,
+    "rtype": "raw type from asn parser",
+    "value": {
+      "hex": "if only hex is possible"
+      "str": "utf8 string if possible"
+    }
+  }
+  {
+    "tag": 2113,
+    "rtype": "raw type from asn parser",
+    "compv": {
+      "_comment": "compound value",
+      "tag": 1,
+      "rtype": "utf8",
+      "value": {
+        "hex": "if only hex is possible"
+        "str": "utf8 string if possible"
+      }
+    }
+    },
+    "hex": "if only hex is possible"
+    "str": "utf8 string if possible"
+  },
+
