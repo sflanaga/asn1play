@@ -1,7 +1,12 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.*;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.google.common.base.Function;
+import io.github.classgraph.ClassGraph;
+import io.github.classgraph.ClassInfo;
+import io.github.classgraph.ScanResult;
 import org.bouncycastle.asn1.*;
 import org.bouncycastle.util.Strings;
 import org.bouncycastle.util.encoders.Hex;
@@ -9,10 +14,10 @@ import org.slf4j.event.Level;
 import util.PhaseTrack;
 import util.Util;
 
-import java.io.InputStream;
-import java.math.BigInteger;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class Asn1ToJson2 {
@@ -26,6 +31,7 @@ public class Asn1ToJson2 {
 
         }
     }
+
     public static int peekForTag(ASN1Primitive obj) {
         if (obj instanceof ASN1TaggedObject) {
             ASN1TaggedObject o = (ASN1TaggedObject) obj;
@@ -34,11 +40,11 @@ public class Asn1ToJson2 {
             return -1;
     }
 
-    public static JsonNode procDlTaggedObject(DLTaggedObject obj) {
+    public static JsonNode procASN1TaggedObject(ASN1TaggedObject obj) {
         return walkRecurse(obj.getBaseObject().toASN1Primitive());
     }
 
-    public static JsonNode procBERSet(BERSet set) {
+    public static JsonNode procASN1Set(ASN1Set set) {
         ObjectNode on = om.createObjectNode();
         for (int i = 0, count = set.size(); i < count; ++i) {
             ASN1Primitive tagPeek = set.getObjectAt(i).toASN1Primitive();
@@ -53,17 +59,17 @@ public class Asn1ToJson2 {
         return on;
     }
 
-    public static JsonNode procDEROctetString(DEROctetString obj) {
+    public static JsonNode procASN1OctetString(ASN1OctetString obj) {
         return new TextNode(toStr(obj.getOctets()));
     }
 
-    public static JsonNode procDERGraphicString(DERGraphicString obj) {
+    public static JsonNode procASN1GraphicString(ASN1GraphicString obj) {
         String s = obj.getString();
         return new TextNode(s);
     }
 
 
-    public static JsonNode procBERSequence(BERSequence sequence) {
+    public static JsonNode procASN1Sequence(ASN1Sequence sequence) {
         ArrayNode an = om.createArrayNode();
         for (int i = 0, count = sequence.size(); i < count; ++i) {
             an.add(walkRecurse(sequence.getObjectAt(i).toASN1Primitive()));
@@ -71,19 +77,43 @@ public class Asn1ToJson2 {
         return an;
     }
 
+    public static JsonNode doNothing(Object obj) {
+        throw new RuntimeException("class" + obj.getClass().getName() + " is not mapped to a handler yet");
+    }
+
+    static ScanResult classResults = null;
+
+    static ScanResult classScan() {
+        if ( classResults == null ) {
+            PhaseTrack.start();
+            classResults = new ClassGraph()
+                    .enableClassInfo().acceptPackages("org.bouncycastle").scan();
+            PhaseTrack.logTimes("done scanning", Level.INFO, TimeUnit.MILLISECONDS);
+        }
+        return classResults;
+
+    }
     private static HashMap<Class, Function<ASN1Primitive, JsonNode>> typeHandlers = new HashMap<>();
 
     static {
-        typeHandlers.put(BERTaggedObject.class, (obj) -> procBERTaggedObject((BERTaggedObject) obj));
-        typeHandlers.put(DLTaggedObject.class, (obj) -> procDlTaggedObject((DLTaggedObject) obj));
-        typeHandlers.put(BERSequence.class, (obj) -> procBERSequence((BERSequence) obj));
-        typeHandlers.put(BERSet.class, (obj) -> procBERSet((BERSet) obj));
-        typeHandlers.put(DERGraphicString.class, (obj) -> procDERGraphicString((DERGraphicString) obj));
-        typeHandlers.put(DEROctetString.class, (obj) -> procDEROctetString((DEROctetString) obj));
-    }
-
-    private static JsonNode procBERTaggedObject(BERTaggedObject obj) {
-        return walkRecurse(obj.getBaseObject().toASN1Primitive());
+        typeHandlers.put(ASN1TaggedObject.class, (obj) -> procASN1TaggedObject((ASN1TaggedObject) obj));
+        typeHandlers.put(ASN1Sequence.class, (obj) -> procASN1Sequence((ASN1Sequence) obj));
+        typeHandlers.put(ASN1Set.class, (obj) -> procASN1Set((ASN1Set) obj));
+        typeHandlers.put(ASN1GraphicString.class, (obj) -> procASN1GraphicString((ASN1GraphicString) obj));
+        typeHandlers.put(ASN1OctetString.class, (obj) -> procASN1OctetString((ASN1OctetString) obj));
+        // map all possible sub types in this map so we do not miss anything
+        // the match in the hash for a class does not take into account subtype - only
+        // perfect class matches
+        HashMap<Class, Function<ASN1Primitive, JsonNode>> tmp = new HashMap<>();
+        for(var e: typeHandlers.entrySet()) {
+            Class c = e.getKey();
+            // map any sub types directly
+            for(ClassInfo ci: classScan().getSubclasses(c))
+                tmp.put(ci.loadClass(), e.getValue());
+        }
+        for(var e: tmp.entrySet()) {
+            typeHandlers.put(e.getKey(), e.getValue());
+        }
     }
 
     public static JsonNode walkRecurse(ASN1Primitive obj) {
@@ -95,32 +125,35 @@ public class Asn1ToJson2 {
         }
     }
 
+
     public static void main(String[] args) {
 
         try {
             for (int k = 0; k < 3; k++)
 
-            try (ASN1InputStream ais = new ASN1InputStream(Util.create(Paths.get(args[0])))) {
-                PhaseTrack.start();
-                int i = 0;
-                long len = 0;
-                while (ais.available() > 0) {
-                    ASN1Primitive obj = ais.readObject();
-                    JsonNode jo = walkRecurse(obj);
-                    String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
-                    len += prettyJson.length();
-//                    System.out.println(prettyJson);
-//                    System.out.println("==============");
-                    i++;
-                }
-                System.out.printf("recs: %d  len: %d\n", i, len);
+                try (ASN1InputStream ais = new ASN1InputStream(Util.create(Paths.get(args[0])))) {
+                    PhaseTrack.start();
+                    int i = 0;
+                    long len = 0;
+                    while (ais.available() > 0) {
+                        ASN1Primitive obj = ais.readObject();
+                        JsonNode jo = walkRecurse(obj);
+                        String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
+                        len += prettyJson.length();
+                        if ( i < 3 ) {
+                            System.out.println(prettyJson);
+                        }
+                        i++;
+                    }
+                    System.out.printf("recs: %d  len: %d\n", i, len);
 
-                PhaseTrack.recordTimePoint("done");
-                PhaseTrack.logTimes("all times", Level.INFO, TimeUnit.MILLISECONDS);
-            }
+                    PhaseTrack.recordTimePoint("done");
+                    PhaseTrack.logTimes("all times", Level.INFO, TimeUnit.MILLISECONDS);
+                }
         } catch (Exception e) {
             e.printStackTrace();
         }
+
     }
 
 }
