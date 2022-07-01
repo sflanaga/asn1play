@@ -93,25 +93,30 @@ public class Asn1ToJson2 {
         return classResults;
 
     }
-    private static HashMap<Class, Function<ASN1Primitive, JsonNode>> typeHandlers = new HashMap<>();
+    private static HashMap<Class, Function<ASN1Primitive, JsonNode>> typeHandlers = null;
 
     static {
-        typeHandlers.put(ASN1TaggedObject.class, (obj) -> procASN1TaggedObject((ASN1TaggedObject) obj));
-        typeHandlers.put(ASN1Sequence.class, (obj) -> procASN1Sequence((ASN1Sequence) obj));
-        typeHandlers.put(ASN1Set.class, (obj) -> procASN1Set((ASN1Set) obj));
-        typeHandlers.put(ASN1GraphicString.class, (obj) -> procASN1GraphicString((ASN1GraphicString) obj));
-        typeHandlers.put(ASN1OctetString.class, (obj) -> procASN1OctetString((ASN1OctetString) obj));
+        HashMap<Class, Function<ASN1Primitive, JsonNode>> tmp1 = new HashMap<>();
+        tmp1.put(ASN1TaggedObject.class, (obj) -> procASN1TaggedObject((ASN1TaggedObject) obj));
+        tmp1.put(ASN1Sequence.class, (obj) -> procASN1Sequence((ASN1Sequence) obj));
+        tmp1.put(ASN1Set.class, (obj) -> procASN1Set((ASN1Set) obj));
+        tmp1.put(ASN1GraphicString.class, (obj) -> procASN1GraphicString((ASN1GraphicString) obj));
+        tmp1.put(ASN1OctetString.class, (obj) -> procASN1OctetString((ASN1OctetString) obj));
         // map all possible sub types in this map so we do not miss anything
         // the match in the hash for a class does not take into account subtype - only
         // perfect class matches
         HashMap<Class, Function<ASN1Primitive, JsonNode>> tmp = new HashMap<>();
-        for(var e: typeHandlers.entrySet()) {
+        for(var e: tmp1.entrySet()) {
             Class c = e.getKey();
             // map any sub types directly
             for(ClassInfo ci: classScan().getSubclasses(c))
                 tmp.put(ci.loadClass(), e.getValue());
         }
         for(var e: tmp.entrySet()) {
+            tmp1.put(e.getKey(), e.getValue());
+        }
+        typeHandlers =new HashMap<>(tmp1.size());
+        for(var e: tmp1.entrySet()) {
             typeHandlers.put(e.getKey(), e.getValue());
         }
     }
@@ -127,7 +132,6 @@ public class Asn1ToJson2 {
 
 
     public static void main(String[] args) {
-
         try {
             for (int k = 0; k < 3; k++)
 
@@ -140,10 +144,10 @@ public class Asn1ToJson2 {
                         JsonNode jo = walkRecurse(obj);
                         String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
                         len += prettyJson.length();
-                        if ( i < 3 ) {
+                        i++;
+                        if ( i < 0 ) {
                             System.out.println(prettyJson);
                         }
-                        i++;
                     }
                     System.out.printf("recs: %d  len: %d\n", i, len);
 
