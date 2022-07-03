@@ -5,6 +5,7 @@ import com.brightsparklabs.asanti.model.schema.type.*;
 import com.brightsparklabs.asanti.model.schema.typedefinition.AsnSchemaTypeDefinition;
 import com.brightsparklabs.asanti.model.schema.typedefinition.AsnSchemaTypeDefinitionImpl;
 import com.brightsparklabs.asanti.reader.AsnSchemaReader;
+import com.brightsparklabs.asanti.schema.AsnBuiltinType;
 import com.google.common.base.Charsets;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.CharSource;
@@ -159,6 +160,7 @@ public class AsantiSchemaExperiment {
         }
         node.fieldName = name;
         node.bottom = bottom;
+        node.primAsnBuiltinType = type.getBuiltinType();
         if ( logit )
             System.out.println(ind(depth) + name + ": " + type.getClass().getSimpleName() + " is "
                     + tagNo + optional + type.getBuiltinType() + en);
