@@ -8,6 +8,7 @@ import org.bouncycastle.util.encoders.Hex;
 import org.slf4j.event.Level;
 import picocli.CommandLine;
 import util.PhaseTrack;
+import util.TagStack;
 import util.Util;
 
 import java.math.BigInteger;
@@ -19,7 +20,7 @@ import java.util.concurrent.TimeUnit;
 public class Asn1ToJson3 {
     public static class Cli {
 
-        @CommandLine.Option(names = {"-f", "--properties_file"}, arity = "1..*", required = true,
+        @CommandLine.Option(names = {"-f", "--ber_files"}, arity = "1..*", required = true,
                 description = "files to decode")
         java.nio.file.Path[] files;
 
@@ -86,6 +87,8 @@ public class Asn1ToJson3 {
 
 
         if (obj instanceof ASN1TaggedObject) {
+            ASN1TaggedObject subTag = (ASN1TaggedObject)obj;
+            int subno = subTag.getTagNo();
             node = walk(debugWriteThisOne, depth + 1, tagStack, ((ASN1TaggedObject) obj).getBaseObject().toASN1Primitive(),schemaNode);
         } else if (obj instanceof org.bouncycastle.util.Iterable) {
             if (obj instanceof ASN1Sequence) {
@@ -98,15 +101,7 @@ public class Asn1ToJson3 {
             }
         } else if (obj instanceof ASN1OctetString) {
             ASN1OctetString os = (ASN1OctetString) obj;
-            String tmp = "??";
-            if ( schemaNode == null )
-                tmp = " no schema here";
-            else
-                if ( schemaNode.primAsnBuiltinType != null )
-                    tmp = " type: " + schemaNode.primAsnBuiltinType.toString();
-                else
-                    tmp = " builtin is null";
-            node = new TextNode(toStr((os).getOctets()) + tmp);
+            node = fromOctetStringToJsonNode(debugWriteThisOne, depth, tagStack, os, schemaNode);
         } else if (obj instanceof ASN1GraphicString) {
             String s = ((ASN1GraphicString) obj).getString();
             node = new TextNode(s);
@@ -125,6 +120,68 @@ public class Asn1ToJson3 {
         return node;
     }
 
+    private static JsonNode fromOctetStringToJsonNode(boolean debugWriteThisOne, int depth, TagStack tagStack, ASN1OctetString os, SchemaNode schemaNode) {
+        JsonNode node;
+        if ( schemaNode == null )
+            throw new RuntimeException("No schema here");
+        switch(schemaNode.primAsnBuiltinType) {
+            case Enumerated: {
+                var i = new BigInteger(os.getOctets());
+                String name = schemaNode.enumDef.get(i.intValue());
+                node = new TextNode(name);
+            } break;
+
+            case Ia5String:
+            case OctetString:
+            case GraphicString:
+            case Utf8String: {
+                node = new TextNode(toStr(os.getOctets()));
+            }
+            break;
+
+            case Null: {
+                node = NullNode.getInstance();
+            }
+            break;
+            case Boolean: {
+                node = os.getOctets()[0]>0 ? BooleanNode.TRUE : BooleanNode.FALSE;
+            }
+            break;
+            case Integer: {
+                var i = new BigInteger(os.getOctets());
+                node = new BigIntegerNode(i);
+            }
+            break;
+            case Choice: {
+                SchemaNode chosenNode = null;
+                try { chosenNode = schemaNode.choices.get(tagStack.peek()); }
+                catch(Exception e) {
+
+                    System.out.println("ouch " + tagStack.toString());
+                    chosenNode = schemaNode.choices.get(tagStack.peek());
+                }
+                ObjectNode cNode = om.createObjectNode();
+                cNode.set(chosenNode.fieldName, fromOctetStringToJsonNode(debugWriteThisOne, depth+1, tagStack, os, chosenNode));
+                node = cNode;
+            }
+            case SequenceOf: {
+                node = new TextNode("NO SEQ OF") ;
+            }
+            break;
+            case Set: {
+                node = new TextNode("NO SET ") ;
+            }
+            break;
+            case SetOf: {
+                node = new TextNode("NO SET OF") ;
+            }
+            break;
+            default:
+                throw new RuntimeException("type: " + schemaNode.primAsnBuiltinType.toString() + " not yet handled here");
+        }
+        return node;
+    }
+
     private static JsonNode handleSet(boolean debugWriteThisOne, int depth, TagStack tagStack, ASN1Set set, SchemaNode schemaNode) {
 
         // TODO: should handle set have the same either array or object or both logic used below in sequence
@@ -139,6 +196,8 @@ public class Asn1ToJson3 {
                 childSchema = schemaNode.children.get(t);
                 if ( childSchema != null )
                     tagStr = childSchema.fieldName + ":" + t;
+                else
+                    childSchema = schemaNode;
             }
             if ( tagStr == null ) {
                 if (t == -1)
@@ -146,8 +205,9 @@ public class Asn1ToJson3 {
                 else
                     tagStr = "" + t;
             }
-            if ( tagStr != null && tagStr.equals("list-of-subscription-ID"))
-                System.out.println("hey list");
+            if ( t==110 ) {
+                System.out.println("hey");
+            }
             JsonNode primish = walk(debugWriteThisOne, depth +1, tagStack, set.getObjectAt(i).toASN1Primitive(), childSchema);
             onset.set(tagStr, primish);
         }
@@ -239,6 +299,9 @@ public class Asn1ToJson3 {
                 if ( cli.asnTopName == null )
                     throw new RuntimeException("schema must also have the top schema name specified to make it usefule");
                 schemaNode = AsantiSchemaExperiment.createNodes(cli.asnSchemaFile, cli.asnTopName, false);
+
+                SchemaNode test = schemaNode.find(new int[] {110,0,0});
+                int jjj=0;
             }
             for (var path : cli.files) {
                 int recordNo = 0;
@@ -247,9 +310,6 @@ public class Asn1ToJson3 {
                     long len = 0;
                     var tagStack = new TagStack();
                     while (ais.available() > 0) {
-                        ASN1Primitive obj = ais.readObject();
-                        recordNo++;
-
                         boolean writeThisOne = false;
                         if (cli.writeOnly != null) {
                             if (cli.writeOnly.contains(recordNo))
@@ -257,12 +317,21 @@ public class Asn1ToJson3 {
                         } else
                             writeThisOne = true;
 
+                        if ( writeThisOne ) {
+                            System.out.println("Record no: " + recordNo);
+                        }
+
+
+                        ASN1Primitive obj = ais.readObject();
+                        recordNo++;
+
+
                         JsonNode jo = walk(cli.debug & writeThisOne, 0, tagStack, obj, schemaNode);
                         tagStack.clear();
 
                         if (writeThisOne) {
                             String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
-                            System.out.println("Record no: " + recordNo + "\n" + prettyJson);
+                            System.out.println(prettyJson);
                             len += prettyJson.length();
                         }
 

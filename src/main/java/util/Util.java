@@ -31,6 +31,15 @@ public class Util {
         }
     }
 
+    public static boolean isEmpty(String s) {
+        if ( s==null )
+            return true;
+        else if ( s.length()>0 )
+            return false;
+        else
+            return true;
+    }
+
     public static Object getPrivateField(Object obj, String fieldName) {
         try {
             Field field = obj.getClass().getDeclaredField(fieldName);

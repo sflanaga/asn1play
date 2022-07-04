@@ -1,6 +1,7 @@
 import com.brightsparklabs.asanti.schema.AsnBuiltinType;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 
 public class SchemaNode {
@@ -9,6 +10,7 @@ public class SchemaNode {
     protected String fieldName;
     protected boolean bottom;
     protected int tagged;
+    protected HashMap<Integer, String> enumDef = null;
     protected HashMap<Integer, SchemaNode> children;
     protected HashMap<String, SchemaNode> auditChild;
     protected ArrayList<SchemaNode> choices;
@@ -52,5 +54,38 @@ public class SchemaNode {
             if (!auditChild.containsKey(e.getValue().fieldName))
                 throw new RuntimeException("tag/mapped child field: " + e.getValue().fieldName + " not in map by tag list");
         }
+    }
+
+    public SchemaNode find(int[] path) {
+        SchemaNode here = this;
+        while ( here.parent != null) {
+            here = here.parent;
+        }
+        SchemaNode next = here;
+        for (int i = 0; i < path.length; i++) {
+            int tag = path[i];
+            next = next.children.get(tag);
+            if ( next == null )
+                throw new RuntimeException("Cannot find path: " + Arrays.toString(path) + " at " + i);
+        }
+        return next;
+    }
+
+    public boolean isTagged() {
+        if ( this.tagged>=0 )
+            return true;
+        else
+            return false;
+    }
+
+    public SchemaNode getTaggedParent() {
+        if ( this.parent==null) {
+            return this;
+        }
+        SchemaNode here = this;
+        while(!here.isTagged()) {
+            here = here.parent;
+        }
+        return here;
     }
 }

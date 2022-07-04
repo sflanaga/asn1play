@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 
 import static util.Util.getPrivateField;
 
-public class AsantiSchemaExperiment {
+public class AsantiSchemaExperiment2 {
 
     public static void main(String[] args) {
         try {
@@ -50,6 +50,7 @@ public class AsantiSchemaExperiment {
         var inner = type.get();
         SchemaNode node = new SchemaNode(null, false, -1, null);
         walk(node, topTypeName, inner, null, 0, logit);
+
         return node;
     }
 
@@ -85,7 +86,9 @@ public class AsantiSchemaExperiment {
         else if ( type instanceof AsnSchemaTypeConstructed )
             constructed = (AsnSchemaTypeConstructed) type;
 
-
+        // tag
+        // builtin
+        // any children with tags
 
         node.primAsnBuiltinType = type.getBuiltinType();
         HashMap<Integer, String> mapEnum = null;
@@ -164,12 +167,17 @@ public class AsantiSchemaExperiment {
             String subname = compType.getName();
 
             SchemaNode childnode = new SchemaNode(null, false, -1, node);
-            node.addChild(childnode);
+            // we want to add any children to the most recent tagged parent including this one.
+            SchemaNode parentTagg = node.getTaggedParent();
+            //parentTagg.addChild(childnode);
             walk(childnode, subname, compType.getType(), compType, depth + 1, logit);
-            node.addChild(childnode);
+            parentTagg.addChild(childnode);
+
             if ( childnode.tagged >= 0 ) {
-                node.addTaggedChild(childnode.tagged, childnode);
+                parentTagg.addTaggedChild(childnode.tagged, childnode);
             }
+
+
             if ( choice ) {
                 node.addChoiceChild(childnode);
                 if ( logit )

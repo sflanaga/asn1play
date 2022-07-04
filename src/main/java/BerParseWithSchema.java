@@ -1,4 +1,4 @@
-import com.fasterxml.jackson.databind.JsonNode;
+import asanti.AsantiPaths;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.*;
 import lombok.extern.slf4j.Slf4j;
@@ -8,20 +8,36 @@ import org.bouncycastle.util.encoders.Hex;
 import org.slf4j.event.Level;
 import picocli.CommandLine;
 import util.PhaseTrack;
-import util.TagStack;
 import util.Util;
 
+import java.io.BufferedOutputStream;
+import java.io.PrintStream;
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
-public class Asn1ToJson2_1 {
+public class BerParseWithSchema {
     public static class Cli {
 
-        @CommandLine.Option(names = {"-f", "--properties_file"}, arity = "1..*", required = true,
+        @CommandLine.Option(names = {"-f", "--files_to_parse"}, arity = "1..*", required = true,
                 description = "files to decode")
-        java.nio.file.Path[] files;
+        Path[] files;
+
+        @CommandLine.Option(names = {"-o", "--output_file"}, arity = "1..*", required = false,
+                description = "write every thing to this single txt file")
+        Path outputPath;
+
+        @CommandLine.Option(names = {"-s", "--asn1_schema_path"}, required = true,
+                description = "location of the asn1 schema file")
+        Path asnSchemaFile;
+
+        @CommandLine.Option(names = {"-t", "--topname_from_schema"}, required = true,
+                description = "top name to get from the schema to map")
+        String asnTopName;
 
         @CommandLine.Option(names = {"-x", "--hex_also"},
                 description = "always write hex with decodable strings")
@@ -45,6 +61,8 @@ public class Asn1ToJson2_1 {
 
     static long nodeCount = 0;
 
+    static LinkedHashMap<String, AsantiPaths.FieldInfo> schema;
+    static PrintStream ps = null;
     private static String toStr(byte[] bytes) {
         try {
             String s = Util.carefulBytesToString(bytes);
@@ -65,122 +83,92 @@ public class Asn1ToJson2_1 {
             return -1;
     }
 
-    public static JsonNode walk(boolean debugWriteThisOne, int depth, TagStack tagStack, ASN1Primitive obj) {
+    public static String getSchemaString(String path) {
+        var o = schema.get(path);
+        if ( o == null ) {
+            throw new RuntimeException("No connection to schema for tag path: " + path);
+        } else {
+            return o.toString();
+        }
+    }
+
+    public static void walk(boolean debugWriteThisOne, int depth, StringBuilder tagStack, ASN1Primitive obj) {
         nodeCount++;
-        JsonNode node;
         final int tag = peekForTag(obj);
         String strTag = null;
-        if (tag >= 0) {
-            tagStack.push(tag);
-            // strTag = "" + tag;
-        }
-
-        if (debugWriteThisOne)
-            System.out.println(tagStack + " : " + depth + " : " + obj.getClass().getSimpleName());
-
+        int tagStackMarker = tagStack.length();
+        if (tag >= 0 )
+            tagStack.append('/').append(tag);
 
         if (obj instanceof ASN1TaggedObject) {
-            node = walk(debugWriteThisOne, depth + 1, tagStack, ((ASN1TaggedObject) obj).getBaseObject().toASN1Primitive());
+            walk(debugWriteThisOne, depth + 1, tagStack, ((ASN1TaggedObject) obj).getBaseObject().toASN1Primitive());
         } else if (obj instanceof org.bouncycastle.util.Iterable) {
             if (obj instanceof ASN1Sequence) {
                 var seq = (ASN1Sequence) obj;
-                node = handleSequence(debugWriteThisOne, depth, tagStack, seq);
+                handleSequence(debugWriteThisOne, depth, tagStack, seq);
             } else if (obj instanceof ASN1Set) {
-                node = handleSet(debugWriteThisOne, depth, tagStack, (ASN1Set) obj);
+                handleSet(debugWriteThisOne, depth, tagStack, (ASN1Set) obj);
             } else {
                 throw new RuntimeException("Unable handled interable: " + obj.getClass().getName());
             }
         } else if (obj instanceof ASN1OctetString) {
+
             ASN1OctetString os = (ASN1OctetString) obj;
-            node = new TextNode(toStr((os).getOctets()));
+            String path = tagStack.toString();
+            String s = toStr((os).getOctets());
+            write(ps,obj,tagStack,s);
+            if (debugWriteThisOne)
+                write(System.out, obj, tagStack,s);
         } else if (obj instanceof ASN1GraphicString) {
             String s = ((ASN1GraphicString) obj).getString();
-            node = new TextNode(s);
+            if (debugWriteThisOne)
+                write(System.out, obj, tagStack,s);
+
+            write(ps,obj, tagStack, s);
         } else if (obj instanceof ASN1UTF8String) {
             String s = ((ASN1UTF8String) obj).getString();
-            node = new TextNode(s);
+            write(ps,obj,tagStack,s);
+            if (debugWriteThisOne)
+                write(System.out, obj, tagStack,s);
         } else if (obj instanceof ASN1Integer) {
             BigInteger bi = ((ASN1Integer) obj).getValue();
-            node = new BigIntegerNode(bi);
-        }  else {
+            write(ps, obj,tagStack,bi.toString());
+            if (debugWriteThisOne)
+                write(System.out, obj, tagStack,bi.toString());
+        } else {
             throw new RuntimeException("unable handled type: " + obj.getClass().getSimpleName());
         }
-        if (tag >= 0) {
-            tagStack.pop();
-        }
-        return node;
+        if (tag >= 0 )
+            tagStack.setLength(tagStackMarker);
     }
 
-    private static JsonNode handleSet(boolean debugWriteThisOne, int depth, TagStack tagStack, ASN1Set set) {
+    private static void write(PrintStream printStream, ASN1Primitive obj, StringBuilder tagStack, String s) {
+        if ( printStream != null ) {
+            var path = tagStack.toString();
+            var ss = getSchemaString(path);
+            printStream.println(path + "," + ss + "," + obj.getClass().getSimpleName() + "," + s);
+        }
+    }
+
+    private static void writeBottom(ASN1Primitive obj, ASN1OctetString os, String path) {
+        if (ps!=null) {
+            String s = toStr(os.getOctets());
+            ps.println(getSchemaString(path) + " " + s + " " + obj.getClass().getSimpleName());
+        }
+    }
+
+    private static void handleSet(boolean debugWriteThisOne, int depth, StringBuilder tagStack, ASN1Set set) {
 
         // TODO: should handle set have the same either array or object or both logic used below in sequence
-        JsonNode node;
         ObjectNode onset = om.createObjectNode();
         for (int i = 0, count = set.size(); i < count; ++i) {
-            ASN1Primitive tagPeek = set.getObjectAt(i).toASN1Primitive();
-            int t = peekForTag(tagPeek);
-            String tagStr;
-            if (t == -1)
-                throw new RuntimeException("set child not tagged?"); // tagStr = "u" + i;
-            else
-                tagStr = "" + t;
-            if ( t == 110 ) {
-                System.out.println("hey");
-            }
-            JsonNode primish = walk(debugWriteThisOne, depth +1, tagStack, set.getObjectAt(i).toASN1Primitive());
-            onset.set(tagStr, primish);
+            walk(debugWriteThisOne, depth + 1, tagStack, set.getObjectAt(i).toASN1Primitive());
         }
-        node = onset;
-        return node;
     }
 
-    private static JsonNode handleSequence(boolean debugWriteThisOne, int depth, TagStack tagStack, ASN1Sequence seq) {
-        JsonNode node;
-        ObjectNode set = om.createObjectNode();
-        ArrayNode an = om.createArrayNode();
-        for (int i = 0, count = seq.size(); i < count; ++i) {
-            ASN1Primitive tagPeek = seq.getObjectAt(i).toASN1Primitive();
-            int t = peekForTag(tagPeek);
-            String tagStr;
-            if (t == -1) {
-//                    log.error("set child not tagged? at {}", tagStack); // tagStr = "u" + i;
-                an.add(walk(debugWriteThisOne, depth +1, tagStack, seq.getObjectAt(i).toASN1Primitive()));
-            } else {
-                tagStr = "" + t;
-                JsonNode primish = walk(debugWriteThisOne, depth +1, tagStack, seq.getObjectAt(i).toASN1Primitive());
-                set.set(tagStr, primish);
-            }
-        }
-        if (set.size() > 0) {
-            node = set;
-            if (an.size() > 0) {
-                set.set("array", an);
-                throw new RuntimeException("i don't think sequence should mix tagged and untagged a the same level");
-            }
-        } else if (an.size() > 0)
-            node = an;
-        else
-            throw new RuntimeException("nothing in this sequence that is array or tagged");
-        return node;
-    }
-
-
-    private static boolean isValue(JsonNodeType nodeType) {
-        switch (nodeType) {
-            case ARRAY:
-            case OBJECT:
-            case POJO:
-                return false;
-            case BINARY:
-            case BOOLEAN:
-            case MISSING:
-            case NULL:
-            case NUMBER:
-            case STRING:
-                return true;
-            default:
-                return false;
-        }
+    private static void handleSequence(boolean debugWriteThisOne, int depth, StringBuilder tagStack, ASN1Sequence seq) {
+        for (int i = 0, count = seq.size(); i < count; ++i)
+            walk(debugWriteThisOne, depth + 1, tagStack, seq.getObjectAt(i).toASN1Primitive());
     }
 
 
@@ -197,18 +185,20 @@ public class Asn1ToJson2_1 {
             System.err.println("cli related exception: " + e);
             return;
         }
-
+//        for (int i = 0; i < 3; i++)
         try {
+            schema = AsantiPaths.createParsingSchema(cli.asnSchemaFile, cli.asnTopName);
+
+            if ( cli.outputPath!=null)
+                ps = new PrintStream(new BufferedOutputStream(Files.newOutputStream(cli.outputPath)));
+            StringBuilder tagStack = new StringBuilder(16);
             for (var path : cli.files) {
                 int recordNo = 0;
                 try (ASN1InputStream ais = new ASN1InputStream(Util.create(path))) {
                     PhaseTrack.start();
                     long len = 0;
-                    var tagStack = new TagStack();
                     while (ais.available() > 0) {
-                        ASN1Primitive obj = ais.readObject();
                         recordNo++;
-
                         boolean writeThisOne = false;
                         if (cli.writeOnly != null) {
                             if (cli.writeOnly.contains(recordNo))
@@ -216,13 +206,22 @@ public class Asn1ToJson2_1 {
                         } else
                             writeThisOne = true;
 
-                        JsonNode jo = walk(cli.debug & writeThisOne, 0, tagStack, obj);
-                        tagStack.clear();
+                        if (writeThisOne)
+                            System.out.println("R# " + recordNo);
+
+                        if ( ps!=null)
+                            ps.println("R# " + recordNo);
+
+                        ASN1Primitive obj = ais.readObject();
+
+
+                        walk(cli.debug & writeThisOne, 0, tagStack, obj);
+                        tagStack.setLength(0);
 
                         if (writeThisOne) {
-                            String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
-                            System.out.println("Record no: " + recordNo + "\n" + prettyJson);
-                            len += prettyJson.length();
+//                            String prettyJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(jo);
+//                            System.out.println("Record no: " + recordNo + "\n" + prettyJson);
+//                            len += prettyJson.length();
                         }
 
                     }

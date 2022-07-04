@@ -1,5 +1,6 @@
+package util;
+
 import java.util.Arrays;
-import java.util.LinkedList;
 import java.util.stream.Collectors;
 
 public final class TagStack {
@@ -31,12 +32,15 @@ public final class TagStack {
         if ( depth == 0 ) {
             return -1;
         } else {
-            return stack[depth];
+            return stack[depth-1];
         }
     }
     @Override
     public String toString() {
-        return Arrays.stream(stack).limit(depth).mapToObj(i->String.valueOf(i)).collect(Collectors.joining("/"));
+        if ( depth == 0 )
+            return "/";
+        else
+            return "/" + Arrays.stream(stack).limit(depth).mapToObj(i->String.valueOf(i)).collect(Collectors.joining("/"));
     }
 
 
@@ -69,5 +73,25 @@ public final class TagStack {
 
     public void clear() {
         depth=0;
+    }
+
+    public static void main(String[] args) {
+        try {
+            TagStack s = new TagStack();
+            s.push(4);
+            s.push(1);
+            s.push(3);
+            System.out.println(s);
+            System.out.println(s.peek());
+            System.out.println(s);
+            s.pop();
+            s.push(10);
+            System.out.println(s);
+            System.out.println(s.peek());
+            System.out.println(s);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }
