@@ -15,6 +15,7 @@ import java.io.PrintStream;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -112,13 +113,12 @@ public class BerParseWithSchema {
                 throw new RuntimeException("Unable handled interable: " + obj.getClass().getName());
             }
         } else if (obj instanceof ASN1OctetString) {
-
             ASN1OctetString os = (ASN1OctetString) obj;
             String path = tagStack.toString();
             String s = toStr((os).getOctets());
-            write(ps,obj,tagStack,s);
+            write(ps,os,tagStack);
             if (debugWriteThisOne)
-                write(System.out, obj, tagStack,s);
+                write(System.out,os,tagStack);
         } else if (obj instanceof ASN1GraphicString) {
             String s = ((ASN1GraphicString) obj).getString();
             if (debugWriteThisOne)
@@ -147,6 +147,57 @@ public class BerParseWithSchema {
             var path = tagStack.toString();
             var ss = getSchemaString(path);
             printStream.println(path + "," + ss + "," + obj.getClass().getSimpleName() + "," + s);
+        }
+    }
+
+    private static void write(PrintStream printStream, ASN1OctetString oct, StringBuilder tagStack) {
+        if ( printStream != null ) {
+            var path = tagStack.toString();
+            var fieldInfo =schema.get(path);
+            String s;
+            byte[] bytes = oct.getOctets();
+            if ( fieldInfo.enumDef!=null ) {
+                s = "(" + getEnumString(bytes, fieldInfo.enumDef) + ")";
+            } else {
+                switch (fieldInfo.builtinType) {
+                    case Integer:
+                        s = bytesIntegerToString(bytes);
+                        break;
+                    default:
+                        s = toStr(bytes);
+                        break;
+                }
+            }
+            var ss = getSchemaString(path);
+            printStream.println(path + "," + ss + "," + oct.getClass().getSimpleName() + "," + s);
+        }
+    }
+
+    private static String getEnumString(byte[] bytes, HashMap<Integer, String> enumDef) {
+        int i = (int)bytesToLong(bytes);
+        String en = enumDef.get(i);
+        if ( en == null ) {
+            // TODO: these do occur - just write the number?
+            return bytesIntegerToString(bytes);
+        }
+        return en;
+    }
+    private static long bytesToLong(byte[] bytes) {
+        long l = -1;
+        if (bytes.length == 1) {
+            l = (long) bytes[0];
+        } else {
+            BigInteger bi = new BigInteger(bytes);
+            l = bi.longValue();
+        }
+        return l;
+    }
+    private static String bytesIntegerToString(byte[] bytes) {
+        if (bytes.length == 1) {
+            return String.valueOf(bytes[0]);
+        } else {
+            BigInteger bi = new BigInteger(bytes);
+            return bi.toString();
         }
     }
 

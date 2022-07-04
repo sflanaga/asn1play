@@ -3,6 +3,8 @@ package asanti;
 import com.brightsparklabs.asanti.model.schema.AsnSchema;
 import com.brightsparklabs.asanti.model.schema.type.AsnSchemaComponentType;
 import com.brightsparklabs.asanti.model.schema.type.AsnSchemaType;
+import com.brightsparklabs.asanti.model.schema.type.AsnSchemaTypePlaceholder;
+import com.brightsparklabs.asanti.model.schema.type.AsnSchemaTypeWithNamedTags;
 import com.brightsparklabs.asanti.reader.AsnSchemaReader;
 import com.brightsparklabs.asanti.schema.AsnBuiltinType;
 import com.google.common.base.Charsets;
@@ -27,13 +29,36 @@ public class AsantiPaths {
 
         public final String fieldName;
         public final FieldInfo parent;
+        public final HashMap<Integer, String> enumDef;
 
         public FieldInfo(FieldInfo parent, AsnBuiltinType builtinType, String fieldName, AsnSchemaType type) {
             this.parent = parent;
             this.builtinType = builtinType;
             this.fieldName = fieldName;
             this.asantiType = type;
+
+            switch(builtinType) {
+                case Integer:
+                case Enumerated:
+                     enumDef = new HashMap<>();
+                    if ( type instanceof AsnSchemaTypePlaceholder) {
+                        var holder = (AsnSchemaTypePlaceholder)type;
+                        if ( holder.getIndirectType() instanceof AsnSchemaTypeWithNamedTags) {
+                            AsnSchemaTypeWithNamedTags tags = (AsnSchemaTypeWithNamedTags) holder.getIndirectType();
+                            for (var e : tags.getTagsToNamedValues().values()) {
+                                enumDef.put(Integer.parseInt(e.getTag()), e.getTagName());
+                            }
+                        }
+                    }
+                    break;
+                default:
+                    enumDef = null;
+                    // do nothing yet
+                    break;
+            }
+
         }
+
 
         @Override
         public String toString() {
@@ -51,6 +76,15 @@ public class AsantiPaths {
             return parentPath + "/" + fieldName + "," + builtinType.toString();
         }
     }
+    private static AsnSchemaTypeWithNamedTags getEnumMap(AsnSchemaTypePlaceholder holder) {
+        var defs = new HashMap<>();
+        AsnSchemaTypeWithNamedTags tags = (AsnSchemaTypeWithNamedTags) holder.getIndirectType();
+        for(var e: tags.getTagsToNamedValues().values()) {
+            var x = e;
+            defs.put(Integer.parseInt(e.getTag()), e.getTagName());
+        }
+        return tags;
+    }
 
 
     public static LinkedHashMap<String, FieldInfo> createParsingSchema(Path schemaPath, String topFieldName) {
@@ -65,6 +99,7 @@ public class AsantiPaths {
             LinkedHashMap<String, FieldInfo> map = new LinkedHashMap<>();
             TagStack tagStack = new TagStack();
             walk(type, tagStack, topFieldName, null, map, false, 0);
+
 
 //            for(var e: map.entrySet()) {
 //                System.out.println(e.getKey() + "  " + e.getValue());
@@ -83,13 +118,10 @@ public class AsantiPaths {
             map.put(tagStack.toString(), fieldInfo);
         }
 
-
         for (int i = 0; i < type.getAllComponents().size(); i++) {
             AsnSchemaComponentType compType = type.getAllComponents().get(i);
             String subFieldName = compType.getName();
             String strTag = compType.getTag();
-            if ( subFieldName.equals("gPRS-Charging-Id"))
-                System.out.println("");
             int tag = -1;
             if (!isEmpty(strTag))
                 tag = Integer.parseInt(strTag);
